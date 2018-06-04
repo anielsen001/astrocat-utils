@@ -4,7 +4,7 @@ import setuptools
 #    long_description = fh.read()
 
 setuptools.setup(
-    name="astrocat-utils",
+    name="astrocat_utils",
     version="0.0.1",
     author="Aaron Nielsen",
     author_email="apn@apnielsen.com",
