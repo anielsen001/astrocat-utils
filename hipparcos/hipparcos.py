@@ -11,6 +11,22 @@ Additionally allows for use of a local file
 import os
 import gzip
 
+# from:
+# https://stackoverflow.com/questions/3703276/how-to-tell-if-a-file-is-gzip-compressed
+# to determine if a file is gzip compressed
+import binascii
+
+def is_gz_file(filepath):
+    """ determine if a file is gzipped using its first 2 bytes as a 
+    magic number.
+
+    A file that is like .tar.gz is not considered gzip compressed using
+    this method.
+
+    """
+    with open(filepath, 'rb') as test_f:
+        return binascii.hexlify(test_f.read(2)) == b'1f8b'
+
 # use functions and constants from skyfield.data
 import skyfield.data.hipparcos as sfhip
 
@@ -40,6 +56,20 @@ class Hipparcos(object):
         This method wraps skyfield.data.hipparcos.parse
         """
         return sfhip.parse( line )
+
+    def open (self ):
+        """
+        Opens the chosen method of data access and returns a file-like
+        object
+        """
+        # neither handle potenially gzipped files
+        if self.filename:
+            f = open( self.filename, 'r')
+        else:
+            from skyfield import api
+            f = api.load.open( self.url )
+
+        return f
 
     def load( self, match_function ):
         """
