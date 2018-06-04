@@ -1,21 +1,18 @@
-"""
-Objects for reading a Hipparcos database file
-
-based on: 
-https://github.com/skyfielders/python-skyfield/blob/master/skyfield/data/hipparcos.py
-
-Additionally allows for use of a local file
-
-"""
-
 import os
 import gzip
+from skyfield.functions import to_polar
+from skyfield.starlib import Star
+from skyfield.timelib import T0
+from skyfield.units import Angle
+
+import binascii
+
+days = T0 - 2448349.0625
+url = 'ftp://cdsarc.u-strasbg.fr/cats/I/239/hip_main.dat.gz'
 
 # from:
 # https://stackoverflow.com/questions/3703276/how-to-tell-if-a-file-is-gzip-compressed
 # to determine if a file is gzip compressed
-import binascii
-
 def is_gz_file(filepath):
     """ determine if a file is gzipped using its first 2 bytes as a 
     magic number.
@@ -27,76 +24,87 @@ def is_gz_file(filepath):
     with open(filepath, 'rb') as test_f:
         return binascii.hexlify(test_f.read(2)) == b'1f8b'
 
-# use functions and constants from skyfield.data
-import skyfield.data.hipparcos as sfhip
+def gzopen( filename ):
+    """ return a file-like object, if determining if it's gzipped or not """
+    if is_gz_file( filename ):
+        return gzip.GzipFile( filename )
+    else:
+        return open( filename )
 
 class HipparcosError(Exception):
     pass
 
 class Hipparcos(object):
+    """ An Hipparcos catalog object, creates itself from a file
+    structured like ftp://cdsarc.u-strasbg.fr/cats/I/239/hip_main.dat.gz
+    the file can be gzip compressed or not
 
+    """
+
+    filename = None
+    
     def __init__( self,
-                  filename = None,
-                  url = sfhip.url ):
+                  filename ):
 
-        self.filename = filename
-        self.url = url
-        
-        # use a local file if it's specified
-        if filename:
-            try:
-                # check if the file can be read
-                with open(filename,'r') as f:
-                    line = f.readline()
-            except IOError:
-                raise HipparcosError('Cannot access ' + filename + ' !')
-
-    def parse( self, line ):
-        """
-        This method wraps skyfield.data.hipparcos.parse
-        """
-        return sfhip.parse( line )
-
-    def open (self ):
-        """
-        Opens the chosen method of data access and returns a file-like
-        object
-        """
-        # neither handle potenially gzipped files
-        if self.filename:
-            f = open( self.filename, 'r')
+        # check if the file exists
+        if not os.path.isfile( filename ):
+            # fallback to using url
+            #raise HipparcosError( filename + ' does not exist.' )
+            self.url = url
         else:
-            from skyfield import api
-            f = api.load.open( self.url )
+            self.filename = filename
 
-        return f
+    def __getitem__( self, key ):
+        """ 
+        Access like a dictionary the key can be a string or integer
+        into the Hipparcos catalog
+        """
+        return self.get( key )
+        
+    def get( self, which ):
+        """Return a single star, or a list of stars, from the Hipparcos catalog.
+
+        A call like `get('54061')` returns a single `Star` object, while
+        `get(['54061', '53910'])` returns a list of stars.
+
+        """
+        if isinstance( which, list ):
+            r = list()
+            for w in which:
+                # a bit of recursion to make this work with lists
+                r.append( self.get( w ) )
+            return r
+        
+        pattern = ('H|      %6s' % str( which ) ).encode('ascii')
+        for star in self.load(lambda line: line.startswith(pattern)):
+            return star
 
     def load( self, match_function ):
-        """
-        similar to skyfield.data.hipparcos.load
-        """
+        """Yield the Hipparcos stars for which `match_function(line)` is true."""
+
         if self.filename:
-            with open( self.filename, 'r' ) as f:
+            # if we have a filename
+            with gzopen( self.filename ) as f:
                 for line in f:
-                    if match_function( line ):
-                        yield self.parse( line )
-
-        else:
-            # WARNING: does not allow url pass through 
-            return sfhip.load( match_function )            
+                    if match_function(line):
+                        yield self.parse(line)
             
-    def get( self, which ):
-        """
-        This method modifies skyfield.data.hipparcos.get
-        """
-        # the skyfield version uses skyfields load command, so
-        # it's modified here to use the local load method
+       
+    def parse( self, line ):
+        """Return a `Star` build by parsing a Hipparcos catalog entry `line`."""
+        # See ftp://cdsarc.u-strasbg.fr/cats/I/239/ReadMe
+        star = Star(
+            ra=Angle(degrees=float(line[51:63])),
+            dec=Angle(degrees=float(line[64:76])),
+            ra_mas_per_year=float(line[87:95]),
+            dec_mas_per_year=float(line[96:104]),
+            parallax_mas=float(line[79:86]),
+            names=[('HIP', int(line[8:14]))],
+            )
+        star._position_au += star._velocity_au_per_d * days
+        distance, dec, ra = to_polar(star._position_au)
+        star.ra = Angle(radians=ra, preference='hours')
+        star.dec = Angle(radians=dec)
+        return star
 
-        if isinstance(which, str):
-            pattern = ('H|      %6s' % which).encode('ascii')
-            for star in self.load(lambda line: line.startswith(pattern)):
-                return star
-        else:
-            patterns = set(id.encode('ascii').rjust(6) for id in which)
-            return list(self.load(lambda line: line[8:14] in patterns))
-    
+
